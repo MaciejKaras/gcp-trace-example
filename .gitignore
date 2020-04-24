@@ -13,3 +13,13 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# Terraform outputs
+/.terraform/
+/terraform-key
+/terraform.tfstate
+/terraform.tfstate.backup
+/.terraform.tfstate.lock.info
+
+# Idea files
+/.idea/

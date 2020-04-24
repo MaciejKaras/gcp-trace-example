@@ -1,0 +1,7 @@
+runtime: go113
+service: account-service
+
+handlers:
+  - url: /.*
+    secure: always
+    script: auto

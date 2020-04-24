@@ -1,0 +1,10 @@
+runtime: go113
+service: user-service
+
+env_variables:
+  ACCOUNT_SERVICE: "https://account-service-dot-{PROJECT_ID}.ey.r.appspot.com"
+
+handlers:
+  - url: /.*
+    secure: always
+    script: auto
