@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/MaciejKaras/gcp-trace/shared"
 	"github.com/google/uuid"
@@ -10,15 +11,23 @@ import (
 	"time"
 )
 
+var traceExporter *shared.TraceExporter
+
 func main() {
+	var err error
+	traceExporter, err = shared.InitTrace()
+	if err != nil {
+		log.Fatalf("Error initializing trace exporter: %v", err)
+	}
+	defer traceExporter.Flush()
+
+	http.HandleFunc("/account", account)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 		log.Printf("Defaulting to port %s", port)
 	}
-
-	http.HandleFunc("/account", account)
-
 	log.Printf("Listening on port %s", port)
 
 	httpServer := &http.Server{Addr: ":" + port}
@@ -31,6 +40,9 @@ func main() {
 }
 
 func account(w http.ResponseWriter, r *http.Request) {
+	ctx, span := shared.StartRequestSpan(r)
+	defer span.End()
+
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -44,7 +56,7 @@ func account(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accountID := createAccount(request)
+	accountID := createAccount(ctx, request)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -53,7 +65,10 @@ func account(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func createAccount(request shared.CreateAccountRequest) string {
+func createAccount(ctx context.Context, request shared.CreateAccountRequest) string {
+	ctx, span := shared.StartSpan(ctx, "createAccount")
+	defer span.End()
+
 	time.Sleep(time.Millisecond * 200)
 
 	accountID := uuid.New().String()

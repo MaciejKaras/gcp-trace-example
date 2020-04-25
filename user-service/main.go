@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/MaciejKaras/gcp-trace/shared"
 	"github.com/google/uuid"
+	"go.opencensus.io/exporter/stackdriver/propagation"
 	"google.golang.org/appengine"
 	"log"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 var sendMailTopic *pubsub.Topic
 var httpClient *http.Client
 var accountServiceEndpoint string
+var traceExporter *shared.TraceExporter
 
 func main() {
 	ctx := context.Background()
@@ -42,6 +44,12 @@ func main() {
 	accountServiceEnv := os.Getenv("ACCOUNT_SERVICE")
 	accountServiceEndpoint = strings.Replace(accountServiceEnv, "{PROJECT_ID}", projectID, 1)
 
+	traceExporter, err = shared.InitTrace()
+	if err != nil {
+		log.Fatalf("Error initializing trace exporter: %v", err)
+	}
+	defer traceExporter.Flush()
+
 	http.HandleFunc("/user", user)
 
 	port := os.Getenv("PORT")
@@ -61,7 +69,8 @@ func main() {
 }
 
 func user(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, span := shared.StartRequestSpan(r)
+	defer span.End()
 
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -97,6 +106,9 @@ func user(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendMailEvent(ctx context.Context, request shared.RegisterUserRequest) error {
+	ctx, span := shared.StartSpan(ctx, "sendMailEvent")
+	defer span.End()
+
 	message := shared.MailMessage{
 		ID:        uuid.New().String(),
 		Recipient: request.Email,
@@ -109,7 +121,9 @@ func sendMailEvent(ctx context.Context, request shared.RegisterUserRequest) erro
 		return fmt.Errorf("error while marshaling MailMessage: %v", err)
 	}
 
-	if _, err := sendMailTopic.Publish(ctx, &pubsub.Message{Data: data}).Get(ctx); err != nil {
+	attributes := shared.ToMessageAttributes(span)
+
+	if _, err := sendMailTopic.Publish(ctx, &pubsub.Message{Data: data, Attributes: attributes}).Get(ctx); err != nil {
 		return fmt.Errorf("error while publishing to sendMailTopic: %v", err)
 	}
 
@@ -117,6 +131,9 @@ func sendMailEvent(ctx context.Context, request shared.RegisterUserRequest) erro
 }
 
 func sendCreateAccount(ctx context.Context, userRequest shared.RegisterUserRequest) (string, error) {
+	ctx, span := shared.StartClientSpan(ctx, "sendCreateAccount")
+	defer span.End()
+
 	jsonRequest, err := json.Marshal(shared.CreateAccountRequest{
 		Name:        userRequest.Name,
 		Email:       userRequest.Email,
@@ -131,6 +148,8 @@ func sendCreateAccount(ctx context.Context, userRequest shared.RegisterUserReque
 	if err != nil {
 		return "", fmt.Errorf("http.NewRequestWithContext: %v", err)
 	}
+
+	(&propagation.HTTPFormat{}).SpanContextToRequest(span.SpanContext(), request)
 
 	response, err := httpClient.Do(request)
 	if err != nil {

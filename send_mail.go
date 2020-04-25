@@ -1,6 +1,7 @@
 package gcp_trace_example
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"time"
 )
 
+var traceExporter *shared.TraceExporter
+
 type PubSubRequest struct {
 	Message struct {
 		MessageID  string            `json:"messageId"`
@@ -20,13 +23,26 @@ type PubSubRequest struct {
 	Subscription string `json:"subscription"`
 }
 
+func init() {
+	var err error
+	traceExporter, err = shared.InitTrace()
+	if err != nil {
+		log.Fatalf("Error initializing trace exporter: %v", err)
+	}
+}
+
 func SendMail(w http.ResponseWriter, r *http.Request) {
+	defer traceExporter.Flush()
+
 	var pubSubRequest PubSubRequest
 	if err := json.NewDecoder(r.Body).Decode(&pubSubRequest); err != nil {
 		log.Printf("error decoding message: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	ctx, span := shared.StartCloudEventSpan(r.Context(), "SendMail", pubSubRequest.Message.Attributes)
+	defer span.End()
 
 	log.Printf("PubSubRequest: %+v", pubSubRequest)
 
@@ -48,7 +64,7 @@ func SendMail(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("SendMailData: %+v", mailMessage)
 
-	if err := sendMail(mailMessage); err != nil {
+	if err := sendMailRequest(ctx, mailMessage); err != nil {
 		log.Printf("error while sending mail to: %s: %v", mailMessage.Recipient, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -57,7 +73,10 @@ func SendMail(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func sendMail(message shared.MailMessage) error {
+func sendMailRequest(ctx context.Context, message shared.MailMessage) error {
+	ctx, span := shared.StartSpan(ctx, "sendMailRequest")
+	defer span.End()
+
 	log.Printf("Sending email to %s", message.Recipient)
 
 	//Imitate request latency
